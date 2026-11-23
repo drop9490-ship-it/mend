@@ -736,11 +736,12 @@ function parseUpdateBody(body: Array<[number, string]>, updateLine: number): { m
     }
     if (line.trim() === '*** End of File') {
       if (current === null) {
-        chunks.push({ anchor: null, eof: true, O: [], N: [] });
-      } else {
-        current.eof = true;
-        flush();
+        // No chunk is open for it to end: a chunk starts only at an @@ line
+        // or a body line (SPEC section 8), so this line is out of place.
+        throw new Exit2(`error: parse ${idx + 1}`);
       }
+      current.eof = true;
+      flush();
       continue;
     }
     if (line.startsWith('@@')) {
