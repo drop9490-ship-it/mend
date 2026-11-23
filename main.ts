@@ -734,7 +734,7 @@ function parseUpdateBody(body: Array<[number, string]>, updateLine: number): { m
       moveTo = line.slice(V4A_MOVE.length).trim();
       continue;
     }
-    if (line.trim() === '*** End of File') {
+    if (line === '*** End of File') {
       if (current === null) {
         // No chunk is open for it to end: a chunk starts only at an @@ line
         // or a body line (SPEC section 8), so this line is out of place.
