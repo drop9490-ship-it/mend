@@ -64,6 +64,19 @@ class Tree {
   recordMove(oldPath: string, newPath: string): void {
     this.moves.push([oldPath, newPath]);
   }
+  /** True when the path exists as the edits leave it — a regular file in the
+   * tree, or anything at all (file or directory) on disk when untouched.
+   * A directory at a path an edit would create or move to is `exists`, not
+   * a crash in the write phase (SPEC section 2). */
+  existsPath(p: string): boolean {
+    if (this.now.has(p)) return this.now.get(p) !== null;
+    try {
+      statSync(p);
+      return true;
+    } catch {
+      return false;
+    }
+  }
 }
 
 type Edit = (tree: Tree) => void;
@@ -206,7 +219,7 @@ function jsonEdit(v: unknown): Edit | null {
     const text = o.file_text;
     return (tree) => {
       if (!safe(p)) throw new Fail('unsafe', p);
-      if (tree.get(p) !== null) throw new Fail('exists', p);
+      if (tree.existsPath(p)) throw new Fail('exists', p);
       tree.now.set(p, text);
     };
   }
@@ -430,9 +443,13 @@ function parseSection(lines: string[], startIdx: number, diffOld: string | null,
         throw new Exit2(`error: parse ${j + 2}`);
       }
       if (l.startsWith('rename from ')) {
-        renameFrom = stripAB(l.slice('rename from '.length).trim());
+        // SPEC section 6 names the rename paths as written: unlike the
+        // ---/+++ pair, no a/ or b/ prefix is removed from them (git writes
+        // rename lines without a prefix, so `rename from a/foo` is the file
+        // a/foo in directory a).
+        renameFrom = l.slice('rename from '.length).trim();
       } else if (l.startsWith('rename to ')) {
-        renameTo = stripAB(l.slice('rename to '.length).trim());
+        renameTo = l.slice('rename to '.length).trim();
       } else if (l === 'new file mode' || l.startsWith('new file mode ')) {
         newFileMode = true;
       } else if (l === 'deleted file mode' || l.startsWith('deleted file mode ')) {
@@ -538,7 +555,7 @@ function unifiedSectionEdit(section: Section, strict: boolean): Edit {
     const p = section.newPath ?? '';
     return (tree) => {
       if (!safe(p)) throw new Fail('unsafe', p);
-      if (tree.get(p) !== null) throw new Fail('exists', p);
+      if (tree.existsPath(p)) throw new Fail('exists', p);
       const plus: string[] = [];
       let lastPlusNoNL = false;
       let hasPlus = false;
@@ -564,7 +581,7 @@ function unifiedSectionEdit(section: Section, strict: boolean): Edit {
       if (!safe(newP)) throw new Fail('unsafe', newP);
       const text = tree.get(oldP);
       if (text === null) throw new Fail('missing', oldP);
-      if (tree.get(newP) !== null) throw new Fail('exists', newP);
+      if (tree.existsPath(newP)) throw new Fail('exists', newP);
       const out = applyUnifiedHunks(text, section.hunks, strict, oldP);
       tree.now.set(oldP, null);
       tree.now.set(newP, out);
@@ -588,7 +605,7 @@ function srBlockEdit(path: string, oldLines: string[], newLines: string[], stric
   return (tree) => {
     if (!safe(path)) throw new Fail('unsafe', path);
     if (oldLines.length === 0) {
-      if (tree.get(path) !== null) throw new Fail('exists', path);
+      if (tree.existsPath(path)) throw new Fail('exists', path);
       tree.now.set(path, newLines.length === 0 ? '' : newLines.join('\n') + '\n');
       return;
     }
@@ -665,10 +682,10 @@ interface V4AChunk {
   N: LItem[];
 }
 
-const V4A_ADD = '*** Add File:';
-const V4A_DEL = '*** Delete File:';
-const V4A_UPD = '*** Update File:';
-const V4A_MOVE = '*** Move to:';
+const V4A_ADD = '*** Add File: ';
+const V4A_DEL = '*** Delete File: ';
+const V4A_UPD = '*** Update File: ';
+const V4A_MOVE = '*** Move to: ';
 
 function isV4ASectionStart(l: string): boolean {
   return l.startsWith(V4A_ADD) || l.startsWith(V4A_DEL) || l.startsWith(V4A_UPD);
@@ -753,7 +770,7 @@ function parseUpdateBody(body: Array<[number, string]>, updateLine: number): { m
 function v4aAddEdit(path: string, fileLines: string[]): Edit {
   return (tree) => {
     if (!safe(path)) throw new Fail('unsafe', path);
-    if (tree.get(path) !== null) throw new Fail('exists', path);
+    if (tree.existsPath(path)) throw new Fail('exists', path);
     tree.now.set(path, fileLines.length === 0 ? '' : fileLines.join('\n') + '\n');
   };
 }
@@ -772,7 +789,7 @@ function v4aUpdateEdit(path: string, moveTo: string | null, chunks: V4AChunk[], 
     if (moveTo !== null && !safe(moveTo)) throw new Fail('unsafe', moveTo);
     const text = tree.get(path);
     if (text === null) throw new Fail('missing', path);
-    if (moveTo !== null && tree.get(moveTo) !== null) throw new Fail('exists', moveTo);
+    if (moveTo !== null && tree.existsPath(moveTo)) throw new Fail('exists', moveTo);
     const model = parseFile(text);
     let lines = model.lines.slice();
     let cursor = 0;
